@@ -39,6 +39,7 @@ static bool is_ip_over_eth(const u_char* packet)
 		return false;
 }
 
+// http://www4.ncsu.edu/~mlsichit/Teaching/407/Resources/udpChecksum.html
 static uint16_t sc_csum_partial(global_params *params, uint16_t *data, uint16_t count)
 {
     uint32_t sum = 0;
