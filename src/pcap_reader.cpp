@@ -4,7 +4,7 @@
 
 #include "pcap_reader.h"
 
-#ifdef DARWIN
+#ifdef __APPLE__
 // http://fuckingclangwarnings.com
 # pragma clang diagnostic push
 # pragma clang diagnostic ignored "-Wformat-security"
@@ -15,7 +15,7 @@ void verbose(bool verbose, Args&&... args)
 	if (verbose)
 		printf(std::forward<Args&&>(args)...);
 }
-#ifdef DARWIN
+#ifdef __APPLE__
 # pragma clang diagnostic pop
 #endif
 
@@ -37,6 +37,57 @@ static bool is_ip_over_eth(const u_char* packet)
 		return true;
 	else
 		return false;
+}
+
+static uint16_t sc_csum_partial(global_params *params, uint16_t *data, uint16_t count)
+{
+    uint32_t sum = 0;
+    uint16_t size = count >> 1;
+    for (uint16_t i = 0; i < size; ++i) {
+	sum += *data++;
+	//verbose(params->verbose, "sc_csum_partial[%02d]: 0x%x\n", i, sum);
+    }
+    if (count & 0x1) {
+	sum += *(uint8_t *)data;
+	//verbose(params->verbose, "sc_csum_partial[%02d]: 0x%x\n", count, sum);
+    }
+    while (sum >> 16)
+	sum = (sum & 0xffff) + (sum >> 16);
+    //verbose(params->verbose, "sc_csum_partial: 0x%x\n", sum);
+    return sum;
+}
+
+static uint16_t sc_csum_tcpudp_magic(global_params *params, const ip_address *ip_saddr, const ip_address *ip_daddr, uint16_t proto, uint16_t len, uint16_t checksum, uint16_t crc)
+{
+    uint32_t sum = 0;
+
+    const uint16_t *ptr = (const uint16_t *)ip_saddr;
+    sum += *ptr++;
+    sum += *ptr;
+    //verbose(params->verbose, "sc_csum_tcpudp_magic+ip_src: 0x%x\n", sum);
+
+    ptr = (const uint16_t *)ip_daddr;
+    sum += *ptr++;
+    sum += *ptr;
+    //verbose(params->verbose, "sc_csum_tcpudp_magic+ip_dst: 0x%x\n", sum);
+
+    sum += htons(len);
+    //verbose(params->verbose, "sc_csum_tcpudp_magic+len: 0x%x\n", sum);
+
+    sum += htons(proto);
+    //verbose(params->verbose, "sc_csum_tcpudp_magic+proto: 0x%x\n", sum);
+
+    sum += checksum;
+    //verbose(params->verbose, "sc_csum_tcpudp_magic+checksum: 0x%x\n", sum);
+
+    sum -= crc;
+    //verbose(params->verbose, "sc_csum_tcpudp_magic-crc: 0x%x\n", sum);
+
+    while (sum >> 16)
+	sum = (sum & 0xffff) + (sum >> 16);
+    //verbose(params->verbose, "sc_csum_tcpudp_magic: 0x%x\n", sum);
+
+    return ~sum;
 }
 
 /* Callback function invoked by libpcap for every incoming packet */
@@ -61,6 +112,9 @@ void p_handler(u_char *param, const struct pcap_pkthdr *header, const u_char *pk
 	u_int udp_size = 0;
 	u_int data_size = 0;
 
+	uint16_t recv_crc = 0;
+	uint16_t calc_crc = 0;
+
 	/* unused parameter */
 	(void)(param);
 
@@ -83,22 +137,30 @@ void p_handler(u_char *param, const struct pcap_pkthdr *header, const u_char *pk
 		/* retrieve the position of the udp header */
 		uh = (udp_header *)((u_char*)ih + ip_hdr_size);
 		/* print ip addresses and udp ports */
-		verbose(params->verbose, "[%d] UDP: %s.%.6d\t%d.%d.%d.%d:%d -> %d.%d.%d.%d:%d  length:%d\n",
+		verbose(params->verbose, "[%d] UDP: %s.%.6d\t%d.%d.%d.%d:%d -> %d.%d.%d.%d:%d length:%d\n",
 			pack_no, timestr, header->ts.tv_usec,
 			ih->saddr.byte1, ih->saddr.byte2, ih->saddr.byte3, ih->saddr.byte4, ntohs(uh->sport),
 			ih->daddr.byte1, ih->daddr.byte2, ih->daddr.byte3, ih->daddr.byte4, ntohs(uh->dport),
 			header->len);
-		udp_size = ntohs(uh->len);	// udp_size = header size(8) + data size
+		udp_size = ntohs(uh->len);	// udp_size = header_size(8) + data_size
 		sh = (char *)uh + UDP_HEADER_SIZE;
 		data_size = udp_size - UDP_HEADER_SIZE;
-		verbose(params->verbose, "size: eth: %d, ip: %d, udp: %d, data: %d\n", eth_hdr_size, ip_hdr_size, UDP_HEADER_SIZE, data_size);
+
+		recv_crc = ntohs(uh->crc);
+		calc_crc = ntohs(sc_csum_tcpudp_magic(params, &ih->saddr, &ih->daddr, ih->proto, udp_size,
+                                                      sc_csum_partial(params, (uint16_t *)uh, udp_size), uh->crc));
+
+		verbose(params->verbose, "size: eth: %d, ip: %d, udp: %d, data_len: %d, crc: 0x%x, checksum: 0x%x\n",
+			eth_hdr_size, ip_hdr_size, UDP_HEADER_SIZE, data_size, recv_crc, calc_crc);
+		if (recv_crc != calc_crc)
+			verbose(params->verbose, "UDP CHECKSUM IS INCONSISTENT!\n");
 		break;
 
 	case IPPROTO_TCP:
 		/* retrieve the position of the tcp header */
 		th = (tcp_header *)((u_char*)ih + ip_hdr_size);
 		/* print ip addresses and tcp ports */
-		verbose(params->verbose, "[%d] TCP: %s.%.6d\t%d.%d.%d.%d:%d -> %d.%d.%d.%d:%d  length:%d\n",
+		verbose(params->verbose, "[%d] TCP: %s.%.6d\t%d.%d.%d.%d:%d -> %d.%d.%d.%d:%d length:%d\n",
 			pack_no, timestr, header->ts.tv_usec,
 			ih->saddr.byte1, ih->saddr.byte2, ih->saddr.byte3, ih->saddr.byte4, ntohs(th->sport),
 			ih->daddr.byte1, ih->daddr.byte2, ih->daddr.byte3, ih->daddr.byte4, ntohs(th->dport),

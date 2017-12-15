@@ -35,7 +35,7 @@ struct ip_header
 	u_char	ver_ihl;		// Version (4 bits) + Internet header length (4 bits)
 	u_char	tos;			// Type of service 
 	u_short tlen;			// Total length 
-	u_short identification;	// Identification
+	u_short identification;		// Identification
 	u_short flags_fo;		// Flags (3 bits) + Fragment offset (13 bits)
 	u_char	ttl;			// Time to live
 	u_char	proto;			// Protocol
@@ -240,8 +240,8 @@ struct rtp_info
 	time_t first_ts { 0 };
 	time_t last_ts { 0 };
 
-    uint32_t first_seq { 0 };
-    uint32_t last_seq { 0 };
+	uint32_t first_seq { 0 };
+	uint32_t last_seq { 0 };
 
 	uint32_t packets { 0 };
 

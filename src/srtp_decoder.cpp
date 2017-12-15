@@ -83,7 +83,7 @@ int main(int argc, char* argv[])
 	global_params params;
 	params.filter = "udp or tcp";
 
-    bool show_all_streams_info = false;
+	bool show_all_streams_info = false;
 
 	auto get_arg = [&args](const char *name) {
 		if (args[name] && args[name].isString())
@@ -94,16 +94,16 @@ int main(int argc, char* argv[])
 	std::string input_path = get_arg("<input_tcpdump_pcap_path>");
 	std::string output_path = get_arg("<output_decoded_payload_path>");
 	std::string ssrc_str = get_arg("<ssrc_into_rtp_hex_format>");
-    params.ssrc = (uint32_t)(strtoul(ssrc_str.c_str(), 0, 16) & 0xFFFFFFFF);
+	params.ssrc = (uint32_t)(strtoul(ssrc_str.c_str(), 0, 16) & 0xFFFFFFFF);
 	std::string keyBase64 = get_arg("<base64_secret_key>");
 	std::string sha = get_arg("<sha_crypto_suite>");
 	bool container = false;
 	if (args["--container"] && args["<container>"].isString())
 		container = args["<container>"].asString() == std::string("true");
-    if (args["--expression"] && args["--expression"].isString())
-        params.filter = args["--expression"].asString();
-    if (args["--list"] && args["--list"].isBool())
-	    show_all_streams_info = args["--list"].asBool();
+	if (args["--expression"] && args["--expression"].isString())
+		params.filter = args["--expression"].asString();
+	if (args["--list"] && args["--list"].isBool())
+		show_all_streams_info = args["--list"].asBool();
 	params.verbose = args["--verbose"].asBool();
 
 	std::cout << "input pcap file: " << input_path << std::endl;

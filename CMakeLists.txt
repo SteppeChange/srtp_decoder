@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.0)
 project(srtp_decoder)
 # The version number
 set (srtp_decoder_VERSION_MAJOR 1)
-set (srtp_decoder_VERSION_MINOR 8)
+set (srtp_decoder_VERSION_MINOR 9)
 # configure a header file to pass some of the CMake settings to the source code
 configure_file (
   "${PROJECT_SOURCE_DIR}/src/srtp_decoder.h.in"
