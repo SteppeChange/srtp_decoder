@@ -204,6 +204,12 @@ int main(int argc, char* argv[])
                        ri.packets, ri.ssrc, ri.first_ts, ri.last_ts, ri.first_seq, ri.last_seq);
             }
 
+            std::string output_path_rtp(output_path);
+            output_path_rtp += ".";
+            output_path_rtp += std::to_string((int)ri.pt);
+            output_path_rtp += ".rtp";
+            std::ofstream rtp_file(output_path_rtp.c_str(), std::ofstream::out | std::ofstream::binary);
+
             SrtpSession srtp_decoder;
             srtp_decoder.Init();
 
@@ -215,9 +221,20 @@ int main(int argc, char* argv[])
             auto count = 0;
 
             for (auto &i: ri.srtp_stream) {
+
+                
                 int rtp_length = 0;
                 unsigned char *srtp_buffer = i.data();
                 auto length = i.size();
+
+                if (container) {
+                    unsigned char sz[4];
+                    int_to_char(length, sz);
+                    rtp_file.write(reinterpret_cast<char*>(&sz[0]), 4);
+                    int_to_char(0, sz);
+                    rtp_file.write(reinterpret_cast<char*>(&sz[0]), 4);
+                }
+                rtp_file.write(reinterpret_cast<char*>(srtp_buffer), length);
 
                 bool res = srtp_decoder.UnprotectRtp(srtp_buffer, length, &rtp_length);
                 if (!res) {
