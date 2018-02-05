@@ -22,21 +22,9 @@ void verbose(bool verbose, Args&&... args)
 // function returns ssrc if found rtp packet
 static int parse_rtp(global_params *params, time_t ts, ip_header const *ih, char *rtp_body, int rtp_size);
 
-static bool is_ip_over_eth(const u_char* packet)
+inline static bool is_ip_over_eth(const u_char* packet)
 {
-	struct ether_header *eptr;/* net/ethernet.h */
-
-	/* lets start with the ether header... */
-	eptr = (struct ether_header *)packet;
-
-	//fprintf(stdout, "ethernet header source: %s", ether_ntoa((const struct ether_addr *)&eptr->ether_shost));
-	//fprintf(stdout, " destination: %s ", ether_ntoa((const struct ether_addr *)&eptr->ether_dhost));
-
-	/* check to see if we have an ip packet */
-	if (ntohs(eptr->ether_type) == ETHERTYPE_IP)
-		return true;
-	else
-		return false;
+    return ntohs(((struct ether_header *)packet)->ether_type) == ETHERTYPE_IP;
 }
 
 // http://www4.ncsu.edu/~mlsichit/Teaching/407/Resources/udpChecksum.html
@@ -151,7 +139,7 @@ void p_handler(u_char *param, const struct pcap_pkthdr *header, const u_char *pk
 		calc_crc = ntohs(sc_csum_tcpudp_magic(params, &ih->saddr, &ih->daddr, ih->proto, udp_size,
                                                       sc_csum_partial(params, (uint16_t *)uh, udp_size), uh->crc));
 
-		verbose(params->verbose, "size: eth: %d, ip: %d, udp: %d, data_len: %d, crc: 0x%x, checksum: 0x%x\n",
+		verbose(params->verbose, "size: eth: %d, ip: %d, udp: %d, data_len: %d, orig_crc: 0x%x, calc_crc: 0x%x\n",
 			eth_hdr_size, ip_hdr_size, UDP_HEADER_SIZE, data_size, recv_crc, calc_crc);
 		if (recv_crc != calc_crc)
 			verbose(params->verbose, "UDP CHECKSUM IS INCONSISTENT!\n");
@@ -251,17 +239,26 @@ std::string ip_to_string(const ip_address &ip)
 	return s;
 };
 
+static void parse_rtcp_rb(global_params *params, uint32_t *rtcp_rb)
+{
+    uint32_t ssrc = ntohl(*rtcp_rb++);
+    uint32_t last_pack_lost = *rtcp_rb & 0xff;
+    uint32_t cum_pack_lost = (*rtcp_rb++ & 0xffffff00) >> 8;
+    verbose(params->verbose, "RTCP Report Block:\n\tssrc=0x%x\n\tlost=%d\n\tcumulative_lost=%u\n",
+        ssrc, last_pack_lost, cum_pack_lost);
+}
+
 int parse_rtp(global_params *params, time_t ts, ip_header const *ih, char *rtp_body, int rtp_size)
 {
-    auto ip_hdr_size = IP_HL(ih) * 4;
+        auto ip_hdr_size = IP_HL(ih) * 4;
 
-    auto hdr = reinterpret_cast<common_rtp_hdr_t const *>(rtp_body);
+        auto hdr = reinterpret_cast<common_rtp_hdr_t const *>(rtp_body);
 	auto rtcp_hdr = reinterpret_cast<rtcp_report_hdr const *>(rtp_body);
 
 	auto src_addr = ih->saddr;
 	auto dst_addr = ih->daddr;
-    uint16_t src_port = 0;
-    uint16_t dst_port = 0;
+        uint16_t src_port = 0;
+        uint16_t dst_port = 0;
 
 	if (ih->proto == IPPROTO_UDP) {
 		udp_header *uh = (udp_header *)((u_char*)ih + ip_hdr_size);
@@ -273,7 +270,7 @@ int parse_rtp(global_params *params, time_t ts, ip_header const *ih, char *rtp_b
 		dst_port = htons(th->dport);
 	} else {
 		assert(false);
-        return 0;
+		return 0;
 	}
 
 	std::string key;
@@ -291,8 +288,32 @@ int parse_rtp(global_params *params, time_t ts, ip_header const *ih, char *rtp_b
 		verbose(params->verbose, "unknown (non-rtp), size: %d\n", rtp_size);
 		return 0;
 	}
-	if (rtcp_hdr->pt == RTCP_SR_REPORT || rtcp_hdr->pt == RTCP_RR_REPORT) {
-		verbose(params->verbose, "skip rtcp report\n");
+#define RTCP_COMMON_PART 8
+	if (rtcp_hdr->pt == RTCP_SR_REPORT) {
+		uint16_t rtcp_size = ntohs(rtcp_hdr->length);
+		uint32_t *rtcp_ptr = (uint32_t *)(rtp_body + RTCP_COMMON_PART);
+		uint32_t ntp_sec = ntohl(*rtcp_ptr++);
+		uint32_t ntp_usec = ntohl(*rtcp_ptr++);
+		uint32_t rtp_ts = ntohl(*rtcp_ptr++);
+		uint32_t pack_cnt = ntohl(*rtcp_ptr++);
+		uint32_t octet_cnt = ntohl(*rtcp_ptr++);
+
+		verbose(params->verbose, "RTCP Sender Report: ssrc=0x%x, rc=%d, words=%d\n",
+		    ntohl(rtcp_hdr->ssrc), rtcp_hdr->rc, rtcp_size);
+		verbose(params->verbose, "\tssrc=0x%x\n\tntp_ts=%u.%u\n\trtp_ts=%u\n\tpack=%u\n\toctet=%u\n",
+		    ntohl(rtcp_hdr->ssrc), ntp_sec, ntp_usec, rtp_ts, pack_cnt, octet_cnt);
+		for (int i = 1; i <= rtcp_hdr->rc; ++i, rtcp_ptr += 6)
+		    parse_rtcp_rb(params, rtcp_ptr);
+		return 0;
+	}
+	if (rtcp_hdr->pt == RTCP_RR_REPORT) {
+		uint16_t rtcp_size = ntohs(rtcp_hdr->length);
+		uint32_t *rtcp_ptr = (uint32_t *)(rtp_body + RTCP_COMMON_PART);
+
+		verbose(params->verbose, "RTCP Receiver Report: ssrc=0x%x, rc=%d, words=%d\n",
+		    ntohl(rtcp_hdr->ssrc), rtcp_hdr->rc, rtcp_size);
+		for (int i = 1; i <= rtcp_hdr->rc; ++i, rtcp_ptr += 6)
+		    parse_rtcp_rb(params, rtcp_ptr);
 		return 0;
 	}
 	verbose(params->verbose, "rtp: head, size: %d\n", rtp_size);
@@ -300,7 +321,7 @@ int parse_rtp(global_params *params, time_t ts, ip_header const *ih, char *rtp_b
 	auto ssrc = ntohl(hdr->ssrc);
 	key += std::to_string(ssrc);
 
-    auto seq = htons(hdr->seq);
+        auto seq = htons(hdr->seq);
 
     verbose(params->verbose, "\tversion=%d\n\tpad=%d\n\text=%d\n\tcc=%d\n\tpt=%d\n\tm=%d\n\tseq=%d\n\tts=%u\n\tssrc=0x%x\n",
             hdr->version, hdr->p, hdr->x, hdr->cc, hdr->pt, hdr->m, htons(hdr->seq), htonl(hdr->ts), htonl(hdr->ssrc));
