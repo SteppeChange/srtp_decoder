@@ -173,15 +173,13 @@ int main(int argc, char* argv[])
 
         // Sorting by timestamps and filtering by ssrc rtp streams map
         for (auto &ri : params.srtp_streams) {
-            if (ri.second.packets < 2
-                || ri.second.ssrc != params.ssrc) {
+            if (ri.second.packets < 2 || ri.second.ssrc != params.ssrc) {
                 continue;
             }
             srtp_streams.push_back(ri.second);
         }
 
-        struct Sort_by_ts
-        {
+        struct Sort_by_ts {
             bool operator() (const rtp_info& s1, const rtp_info& s2) {
                 return (s1.first_ts < s2.first_ts);
             }
@@ -198,10 +196,11 @@ int main(int argc, char* argv[])
             if (params.verbose) {
 #ifdef WIN32
                 printf("Found %06d RTP packets: ssrc: 0x%x, begin_ts: %llu, end_ts: %llu, begin_seq: %d, end_seq: %d\n",
+                       ri.packets, ri.ssrc, ri.first_ts, ri.last_ts, ri.first_seq, ri.last_seq);
 #else
                 printf("Found %06d RTP packets: ssrc: 0x%x, begin_ts: %lu, end_ts: %lu, begin_seq: %d, end_seq: %d\n",
-#endif
                        ri.packets, ri.ssrc, ri.first_ts, ri.last_ts, ri.first_seq, ri.last_seq);
+#endif
             }
 
             std::string output_path_rtp(output_path);
@@ -221,8 +220,6 @@ int main(int argc, char* argv[])
             auto count = 0;
 
             for (auto &i: ri.srtp_stream) {
-
-                
                 int rtp_length = 0;
                 unsigned char *srtp_buffer = i.data();
                 auto length = i.size();
@@ -237,13 +234,12 @@ int main(int argc, char* argv[])
                 rtp_file.write(reinterpret_cast<char*>(srtp_buffer), length);
 
                 bool res = srtp_decoder.UnprotectRtp(srtp_buffer, length, &rtp_length);
+                common_rtp_hdr_t *hdr = (common_rtp_hdr_t *)srtp_buffer;
                 if (!res) {
-                    common_rtp_hdr_t *hdr = (common_rtp_hdr_t *)srtp_buffer;
                     std::cerr << " - seq=" << htons(hdr->seq) << std::endl;
                     continue;
                 }
 
-                common_rtp_hdr_t *hdr = (common_rtp_hdr_t *)srtp_buffer;
                 auto rtp_header_size = sizeof(common_rtp_hdr_t);
                 unsigned char* payload = srtp_buffer + rtp_header_size;
                 if (params.verbose)
